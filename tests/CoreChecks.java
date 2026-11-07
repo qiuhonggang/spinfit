@@ -28,6 +28,11 @@ public class CoreChecks {
   check(HeartReconnectPolicy.matches("SAME","AW-HR-WATCH","same",null,false),"selected address works without scan-response name");
   check(!HeartReconnectPolicy.matches("OLD","蓝牙心率设备","NEW","蓝牙心率设备",true),"generic name cannot select unrelated sensor");
   HeartReconnectPolicy retry=new HeartReconnectPolicy();check(retry.retryDelay()==1200&&retry.retryDelay()==3000&&retry.retryDelay()==6000&&retry.retryDelay()==-1,"retries back off and terminate");retry.reset();check(retry.retryDelay()==1200,"stable connection restores outage budget");
+  check(ResistanceScale.step(80,11,1,0,100,false)==81,"manual plus starts from actual knob value, not stale target");
+  check(ResistanceScale.step(80,81,1,0,100,true)==82,"rapid plus retains pending intent");
+  check(ResistanceScale.step(80,11,-1,0,100,false)==79,"manual minus starts from actual knob value");
+  check(ResistanceScale.step(-1,11,1,0,100,false)==12,"unavailable telemetry uses current intent");
+  check(ResistanceScale.step(100,11,1,0,100,false)==100,"manual step honors device upper bound");
   System.out.println("PASS: "+checks+" core assertions");
  }
 }

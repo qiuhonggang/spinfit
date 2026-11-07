@@ -10,6 +10,11 @@ public final class ResistanceScale {
         if(Float.isFinite(step)&&step>0)value=min+Math.round((value-min)/step)*step;
         return Math.max(min,Math.min(max,value));
     }
+    /** Use telemetry after a knob change; retain pending intent across quick repeated taps. */
+    public static int step(int actual,int currentTarget,int delta,int min,int max,boolean commandPending){
+        int base=!commandPending&&actual>=0?actual:currentTarget;
+        return Math.max(min,Math.min(max,base+delta));
+    }
     public static byte[] command(float level,float min,float max,float step) {
         int tenths=Math.round(target(level,min,max,step)*10);
         return new byte[]{4,(byte)tenths,(byte)(tenths>>8)};

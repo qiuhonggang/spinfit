@@ -16,7 +16,7 @@ public final class BikeSession {
     private BikeSource.WriteResult write;private String device="未连接单车";private boolean demoMode;
     private long sampleAt,lastTick,recordId=-1;private int sentTarget=-1;private TelemetryStats stats;private WorkoutStore store;
     private BleHeartRate heart;
-    private boolean dataPaused;private String saveError="";
+    private boolean dataPaused;private String saveError="";private long manualCommandAt;
     public void init(Context c){if(context!=null)return;context=c.getApplicationContext();settings=new Settings(c);store=new WorkoutStore(c);store.recover();}
     public void init(Settings s){settings=s;}
     public Settings settings(){return settings;}public WorkoutStore store(){return store;}public String saveError(){return saveError;}
@@ -56,7 +56,7 @@ public final class BikeSession {
     public void disconnect(){if(active())return;if(source!=null)source.disconnect();source=null;demo=null;ble=null;sample=null;write=null;device="未连接单车";fire(BikeSource.STATE_DISCONNECTED,"单车已断开");}
     public void startProgram(TrainingProgram p){
         if(active()||!isConnected())return;
-        program=p;engine=new SessionEngine(p,settings.ftpW(),settings.maxHr(),settings.weightKg(),resistanceMax());
+        manualCommandAt=0;program=p;engine=new SessionEngine(p,settings.ftpW(),settings.maxHr(),settings.weightKg(),resistanceMax());
         engine.setTimeScale(demoMode?settings.timeScale():1);engine.setAutoResistance(!p.freeRide&&settings.autoResistance());
         engine.setManualResistance(sample!=null&&sample.resistanceValid?Math.max(resistanceMin(),Math.min(resistanceMax(),sample.resistance)):0);
         stats=new TelemetryStats();if(sample!=null)stats.counters(sample.distanceValid?sample.distanceKm:-1,sample.caloriesValid?sample.calories:-1,false);
@@ -86,7 +86,8 @@ public final class BikeSession {
     }
     private void checkpoint(String status,BikeSource.Sample s){try{store.checkpoint(recordId,engine.snapshot(),stats,status,s);saveError="";}catch(RuntimeException e){saveError="记录保存失败，请检查手机存储空间";engine.pause();fire(11,saveError);}}
     public void applyAuto(){if(engine==null||source==null||engine.isPaused()||!engine.isAutoResistance())return;int t=Math.round(engine.currentTargetResistance());if(t!=sentTarget){write=source.writeResistance(t,resistanceMax());if(write!=null&&write.sent)sentTarget=t;}}
-    public void setAuto(boolean b){if(!active())return;if(!b)engine.setManualResistance(Math.round(engine.currentTargetResistance()));engine.setAutoResistance(b);sentTarget=-1;if(b)applyAuto();}
+    public void setAuto(boolean b){if(!active())return;manualCommandAt=0;if(!b)engine.setManualResistance(Math.round(engine.currentTargetResistance()));engine.setAutoResistance(b);sentTarget=-1;if(b)applyAuto();}
+    public void adjustBy(int delta){if(!active()||engine.isPaused())return;long now=SystemClock.elapsedRealtime();int actual=fresh()&&sample.resistanceValid?sample.resistance:-1;int target=ResistanceScale.step(actual,Math.round(engine.currentTargetResistance()),delta,resistanceMin(),resistanceMax(),manualCommandAt>0&&now-manualCommandAt<1500);adjust(target);manualCommandAt=now;}
     public void adjust(int level){if(!active()||engine.isPaused())return;engine.setAutoResistance(false);engine.setManualResistance(Math.max(resistanceMin(),Math.min(resistanceMax(),level)));write=source.writeResistance(engine.getManualResistance(),resistanceMax());}
     public void pause(){if(!active())return;tick();if(!active())return;engine.pause();source.pauseWorkout();checkpoint("active",null);}
     public boolean resume(){if(!active()||!fresh())return false;engine.resume();dataPaused=false;lastTick=SystemClock.elapsedRealtime();if(sample!=null)stats.counters(sample.distanceValid?sample.distanceKm:-1,sample.caloriesValid?sample.calories:-1,false);source.startWorkout();sentTarget=-1;applyAuto();return true;}
