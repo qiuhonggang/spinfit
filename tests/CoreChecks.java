@@ -33,6 +33,12 @@ public class CoreChecks {
   check(ResistanceScale.step(80,11,-1,0,100,false)==79,"manual minus starts from actual knob value");
   check(ResistanceScale.step(-1,11,1,0,100,false)==12,"unavailable telemetry uses current intent");
   check(ResistanceScale.step(100,11,1,0,100,false)==100,"manual step honors device upper bound");
+  ResistanceCommandState command=new ResistanceCommandState();command.request(15,100);command.written(15,200);command.response(15,true,"");check(!command.verified(),"ACK alone never verifies motor resistance");command.measured(22,300);check(!command.verified(),"different actual remains unverified");check(!command.shouldRetry(15,8199)&&command.shouldRetry(15,8200),"unreached target retries only after deadline");command.request(15,8300);command.written(15,8400);command.response(15,true,"");check(!command.shouldRetry(15,16400),"same target gets at most one retry");command.measured(15,16500);check(command.verified(),"only actual telemetry confirms target");command.measured(16,16600);check(command.overridden()&&!command.shouldRetry(15,30000),"knob adjustment after confirmation prevents automatic fight-back");
+  command.request(20,31000);command.written(20,31100);command.measured(20,31200);command.measured(19,31300);check(command.overridden(),"manual decrement after reaching auto target hands over control");command.request(21,32000);command.written(21,32100);command.response(20,true,"");check(!command.message(32200).contains("已接收"),"late ACK cannot confirm a superseding target");command.response(21,false,"参数错误");check(!command.shouldRetry(21,50000),"invalid parameter never loops retries");command.clear();check(command.target()==-1&&!command.overridden(),"new ride clears previous control state");
+  check(java.util.Arrays.equals(ResistanceScale.commandForDevice("YS_M2M_08482",15,0,100,1),new byte[]{4,15}),"M2M target 15 uses verified whole-level wire format");
+  check(java.util.Arrays.equals(ResistanceScale.commandForDevice("YS_M2M_08482",100,0,100,1),new byte[]{4,100}),"M2M target 100 never multiplies to 1000 or wraps");
+  check(java.util.Arrays.equals(ResistanceScale.commandForDevice("Other FTMS Bike",15,0,100,1),new byte[]{4,(byte)150,0}),"ordinary FTMS retains standard tenths encoding");
+  command.request(10,60000);command.written(10,60100);command.response(10,false,"参数错误");command.measured(10,60200);check(!command.verified(),"rejected procedure cannot be verified by incidental matching measurement");
   System.out.println("PASS: "+checks+" core assertions");
  }
 }

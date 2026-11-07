@@ -56,7 +56,7 @@ public final class BikeSession {
     public void disconnect(){if(active())return;if(source!=null)source.disconnect();source=null;demo=null;ble=null;sample=null;write=null;device="未连接单车";fire(BikeSource.STATE_DISCONNECTED,"单车已断开");}
     public void startProgram(TrainingProgram p){
         if(active()||!isConnected())return;
-        manualCommandAt=0;program=p;engine=new SessionEngine(p,settings.ftpW(),settings.maxHr(),settings.weightKg(),resistanceMax());
+        manualCommandAt=0;write=null;if(ble!=null)ble.resetResistanceCommand();program=p;engine=new SessionEngine(p,settings.ftpW(),settings.maxHr(),settings.weightKg(),resistanceMax());
         engine.setTimeScale(demoMode?settings.timeScale():1);engine.setAutoResistance(!p.freeRide&&settings.autoResistance());
         engine.setManualResistance(sample!=null&&sample.resistanceValid?Math.max(resistanceMin(),Math.min(resistanceMax(),sample.resistance)):0);
         stats=new TelemetryStats();if(sample!=null)stats.counters(sample.distanceValid?sample.distanceKm:-1,sample.caloriesValid?sample.calories:-1,false);
@@ -68,6 +68,7 @@ public final class BikeSession {
     public void tick(){
         if(!active())return;long now=SystemClock.elapsedRealtime();float dt=Math.max(0,Math.min(5,(now-lastTick)/1000f));lastTick=now;
         boolean valid=fresh();if(!valid){engine.pause();dataPaused=true;}
+        if(ble!=null&&engine.isAutoResistance()&&ble.resistanceOverridden()){engine.setAutoResistance(false);if(valid&&sample.resistanceValid)engine.setManualResistance(sample.resistance);ble.cancelPendingResistance();sentTarget=-1;fire(21,"旋钮已接管阻力");}
         boolean accumulating=!engine.isPaused()&&valid;
         BikeSource.Sample s=valid?lastSample():null;
         if(s!=null){stats.counters(s.distanceValid?s.distanceKm:-1,s.caloriesValid?s.calories:-1,accumulating);}
@@ -85,8 +86,8 @@ public final class BikeSession {
         if(engine.isFinished()){source.stopWorkout();context.stopService(new Intent(context,WorkoutService.class));fire(10,"训练已保存");}
     }
     private void checkpoint(String status,BikeSource.Sample s){try{store.checkpoint(recordId,engine.snapshot(),stats,status,s);saveError="";}catch(RuntimeException e){saveError="记录保存失败，请检查手机存储空间";engine.pause();fire(11,saveError);}}
-    public void applyAuto(){if(engine==null||source==null||engine.isPaused()||!engine.isAutoResistance())return;int t=Math.round(engine.currentTargetResistance());if(t!=sentTarget){write=source.writeResistance(t,resistanceMax());if(write!=null&&write.sent)sentTarget=t;}}
-    public void setAuto(boolean b){if(!active())return;manualCommandAt=0;if(!b)engine.setManualResistance(Math.round(engine.currentTargetResistance()));engine.setAutoResistance(b);sentTarget=-1;if(b)applyAuto();}
+    public void applyAuto(){if(engine==null||source==null||engine.isPaused()||!engine.isAutoResistance())return;int t=Math.round(engine.currentTargetResistance());if(t!=sentTarget||(ble!=null&&ble.resistanceNeedsRetry(t))){write=source.writeResistance(t,resistanceMax());if(write!=null&&write.sent)sentTarget=t;}}
+    public void setAuto(boolean b){if(!active())return;manualCommandAt=0;if(ble!=null)ble.resetResistanceCommand();if(!b)engine.setManualResistance(Math.round(engine.currentTargetResistance()));engine.setAutoResistance(b);sentTarget=-1;if(b)applyAuto();}
     public void adjustBy(int delta){if(!active()||engine.isPaused())return;long now=SystemClock.elapsedRealtime();int actual=fresh()&&sample.resistanceValid?sample.resistance:-1;int target=ResistanceScale.step(actual,Math.round(engine.currentTargetResistance()),delta,resistanceMin(),resistanceMax(),manualCommandAt>0&&now-manualCommandAt<1500);adjust(target);manualCommandAt=now;}
     public void adjust(int level){if(!active()||engine.isPaused())return;engine.setAutoResistance(false);engine.setManualResistance(Math.max(resistanceMin(),Math.min(resistanceMax(),level)));write=source.writeResistance(engine.getManualResistance(),resistanceMax());}
     public void pause(){if(!active())return;tick();if(!active())return;engine.pause();source.pauseWorkout();checkpoint("active",null);}

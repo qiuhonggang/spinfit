@@ -62,7 +62,7 @@ public interface BikeSource {
 
     /** 阻力写入结果：界面据此明确提示「自动/手动/只读」状态。 */
     final class WriteResult {
-        public final boolean sent;          // 是否真的下发到 BLE
+        public final boolean sent;          // 是否已提交 BLE 控制流程（可能排队），实际生效需看遥测确认
         public final boolean supported;     // 单车是否声明支持程序控阻
         public final int requestedLevel;    // APP 想设置的档位
         public final String message;        // 面向用户的一句话说明
@@ -94,7 +94,7 @@ public interface BikeSource {
     boolean supportsResistanceTarget();
     /** 是否已获得 FTMS 控制权（RequestControl 成功）。 */
     boolean hasControl();
-    /** 单车屏幕上一次实际生效的阻力（0x2ADA 状态上报 / 遥测），-1 表示未知。 */
+    /** 单车最近一次实际阻力遥测（目标状态不作为实测），-1 表示未知。 */
     int actualResistance();
     /** 连接/协议诊断摘要（供 UI 与日志显示）。 */
     String diagnostics();

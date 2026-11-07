@@ -1,6 +1,9 @@
 package com.spinfit.bike.ble;
 
 import com.spinfit.bike.core.ResistanceScale;
+import com.spinfit.bike.core.ResistanceCommandState;
+import android.os.SystemClock;
+import android.util.Log;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothGatt;
@@ -82,15 +85,24 @@ public final class BleBike implements BikeSource {
     private volatile boolean writingControl;
     private final Queue<UUID> probes = new ArrayDeque<>();
     private volatile boolean initialized;
+    private boolean discovering,servicesHandled;
+    private int inFlightResistance=-1;
+    private long resistanceObservedAt;
+    private final ResistanceCommandState resistanceCommand=new ResistanceCommandState();
     private int waitingOpcode = -1;
     private final Runnable controlTimeout = () -> {
         if (waitingOpcode >= 0) {
             log("控制命令超时 op=" + waitingOpcode);
             lastWriteMessage = "单车控制响应超时，请重试";
+            if(waitingOpcode==4)resistanceCommand.fail(inFlightResistance,"单车控制响应超时",true);
             writingControl = false; waitingOpcode = -1; pendingControl.clear();
         }
     };
-    public String controlStatus(){return lastWriteMessage;}
+    public String controlStatus(){return resistanceCommand.target()>=0?resistanceCommand.message(SystemClock.elapsedRealtime()):lastWriteMessage;}
+    public boolean resistanceNeedsRetry(int target){return resistanceCommand.shouldRetry(target,SystemClock.elapsedRealtime());}
+    public boolean resistanceOverridden(){return resistanceCommand.overridden();}
+    public void resetResistanceCommand(){resistanceCommand.clear();pendingControl.removeIf(p->p.length>0&&u8(p[0])==4);}
+    public void cancelPendingResistance(){pendingControl.removeIf(p->p.length>0&&u8(p[0])==4);}
     /** Actual telemetry is already in the bike's units; never normalize to app settings. */
     public int displayResistance(){return actualRes;}
     public int resistanceMaximum(){return Math.max(1,(int)Math.floor(resistanceMaxSpec));}
@@ -153,7 +165,7 @@ public final class BleBike implements BikeSource {
         sb.append("\n程序控阻: ").append(supportsResistanceTarget() ? "✓ 单车声明支持 0x04"
                 : targetSettingFeatures < 0 ? "? 未读到 0x2ACC（无法确认）" : "✗ 单车未声明（很可能只读）");
         sb.append("\n单车实际阻力: ").append(actualRes >= 0 ? actualRes : "未知（单车未上报 0x2ADA/0x2AD2 阻力）");
-        sb.append("\n最近写入: ").append(lastWriteMessage);
+        sb.append("\n控阻反馈: ").append(controlStatus());
         sb.append("\n实测字段: ").append(fieldsSummary());
         return sb.toString();
     }
@@ -179,6 +191,7 @@ public final class BleBike implements BikeSource {
 
     private void log(String s) {
         if (s == null) return;
+        if(!s.contains(" → ")||s.startsWith("写入"))Log.d("SpinFitBike",s);
         synchronized (logs) { logs.add(s); if (logs.size() > 120) logs.remove(0); }
         final String x = s;
         h.post(() -> { if (listener != null) listener.onLog(x); });
@@ -187,6 +200,7 @@ public final class BleBike implements BikeSource {
     public List<String> logs() { synchronized (logs) { return new ArrayList<>(logs); } }
 
     @Override public void connect() {
+        discovering=false;servicesHandled=false;resistanceObservedAt=0;resistanceCommand.clear();
         BluetoothManager bm = (BluetoothManager) ctx.getSystemService(Context.BLUETOOTH_SERVICE);
         if (bm == null) { fire(STATE_ERROR, "设备不支持蓝牙"); return; }
         adapter = bm.getAdapter();
@@ -216,6 +230,7 @@ public final class BleBike implements BikeSource {
         @Override public void onConnectionStateChange(BluetoothGatt g, int status, int newState) {
             if (status != BluetoothGatt.GATT_SUCCESS) { fire(STATE_ERROR, "连接失败 status=" + status); return; }
             if (newState == BluetoothProfile.STATE_CONNECTED) {
+                if(discovering)return;discovering=true;
                 fire(STATE_CONNECTING, "已连接，正在发现服务…");
                 try { g.discoverServices(); }
                 catch (SecurityException e) { fire(STATE_ERROR, "发现服务失败：" + e.getMessage()); }
@@ -226,6 +241,7 @@ public final class BleBike implements BikeSource {
 
         @Override public void onServicesDiscovered(BluetoothGatt g, int status) {
             if (status != BluetoothGatt.GATT_SUCCESS) { fire(STATE_ERROR, "服务发现失败 " + status); return; }
+            if(servicesHandled)return;servicesHandled=true;
             controlGranted = false; controlPointSubscribed = false;
             subscribeQueue.clear(); pendingControl.clear(); writingControl = false;
             writeChar = null; ctrlChar = null; statusChar = null;
@@ -285,47 +301,8 @@ public final class BleBike implements BikeSource {
         @Override public void onCharacteristicChanged(BluetoothGatt g, BluetoothGattCharacteristic c) {
             UUID u = c.getUuid();
             byte[] v = c.getValue();
-            if (u.equals(FM_CONTROL) || shortUuid(u).startsWith("2AD9")) {
-                if (v != null && v.length >= 3 && u8(v[0]) == 0x80) {
-                    int op = u8(v[1]), result = u8(v[2]);
-                    if(op==waitingOpcode){h.removeCallbacks(controlTimeout);writingControl=false;waitingOpcode=-1;}
-                    if(result==0x05){controlGranted=false;pendingControl.clear();}
-                    if (op == 0x00 && result == 0x01) {
-                        controlGranted = true;
-                        log("✓ RequestControl 成功，已获得控制权；开始/暂停/阻力命令可下发");
-                        flushPendingControl();
-                    } else if (op == 0x07 && result == 0x01) {
-                        log("✓ 单车已开始/继续训练会话（0x07 成功）");
-                    } else if (op == 0x08 && result == 0x01) {
-                        log("✓ 单车已暂停/停止训练会话（0x08 成功）");
-                    } else if (op == 0x04 && result == 0x01) {
-                        log("✓ 目标阻力已被单车接受（0x04 成功）");
-                        lastWriteMessage = "FTMS 0x04 目标阻力已被单车接受";
-                    } else if (op == 0x06 && result == 0x01) {
-                        log("✓ 目标功率已被单车接受（0x06 成功）");
-                    } else {
-                        String why = result == 0x02 ? "不支持该操作码" : result == 0x03 ? "参数错误"
-                                : result == 0x04 ? "操作失败" : result == 0x05 ? "控制权不允许" : "结果码 " + result;
-                        log("✗ 控制点响应 op=0x" + Integer.toHexString(op) + " 失败：" + why);
-                        if (op == 0x04) lastWriteMessage = "单车拒绝目标阻力：" + why;
-                    }
-                    if(controlGranted)flushPendingControl();
-                }
-                return;
-            }
-            if (u.equals(FM_STATUS) || shortUuid(u).startsWith("2ADA")) {
-                if (v != null && v.length >= 1) {
-                    int op = u8(v[0]);
-                    if (op == 0x07 && v.length >= 3) {
-                        actualRes = Math.round(s16(v[1], v[2]) / 10f);
-                        res=actualRes;resMs=System.currentTimeMillis();emit("FTMS 阻力状态");
-                        log("单车状态 0x07：阻力实际变为 " + actualRes + "（单车屏幕已同步）");
-                    } else if (op == 0x04) log("单车状态 0x04：训练已开始/继续（用户或 APP 触发）");
-                    else if (op == 0x02) log("单车状态 0x02：训练被暂停/停止");
-                    else log("单车状态 0x" + Integer.toHexString(op));
-                }
-                return;
-            }
+            if(u.equals(FM_CONTROL)){final byte[] packet=v==null?null:v.clone();h.post(()->handleControlResponse(packet));return;}
+            if(u.equals(FM_STATUS)){final byte[] packet=v==null?null:v.clone();h.post(()->handleMachineStatus(packet));return;}
             parse(u, v);
         }
 
@@ -362,11 +339,11 @@ public final class BleBike implements BikeSource {
 
         @Override public void onCharacteristicWrite(BluetoothGatt g, BluetoothGattCharacteristic c, int status) {
             log("写入 " + shortUuid(c.getUuid()) + " → " + (status == 0 ? "已发出" : "失败(" + status + ")"));
-            if(c.getUuid().equals(FM_CONTROL)&&status!=0){
+            if(c.getUuid().equals(FM_CONTROL)&&status!=0)h.post(()->{
+                if(waitingOpcode==4)resistanceCommand.fail(inFlightResistance,"阻力指令写入失败",true);
                 h.removeCallbacks(controlTimeout);writingControl=false;waitingOpcode=-1;
-                lastWriteMessage="阻力指令写入失败，连接恢复后请重试";
-                pendingControl.clear();
-            }
+                lastWriteMessage="阻力指令写入失败，连接恢复后请重试";pendingControl.clear();
+            });
         }
 
         @Override public void onDescriptorWrite(BluetoothGatt g, BluetoothGattDescriptor d, int status) {
@@ -376,6 +353,26 @@ public final class BleBike implements BikeSource {
             subscribeNext();
         }
     };
+
+    private void handleControlResponse(byte[] v){
+        if(v==null||v.length<3||u8(v[0])!=128)return;
+        int op=u8(v[1]),result=u8(v[2]);
+        log("控制点回执 "+Arrays.toString(v));
+        if(op!=waitingOpcode){log("忽略非当前命令回执 op="+op);return;}
+        int physicalTarget=inFlightResistance;
+        h.removeCallbacks(controlTimeout);writingControl=false;waitingOpcode=-1;
+        if(result==5){controlGranted=false;pendingControl.clear();}
+        String why=result==2?"单车不支持该操作":result==3?"单车拒绝参数":result==4?"单车操作失败":result==5?"控制权已失效":"单车返回错误 "+result;
+        if(op==0&&result==1){controlGranted=true;log("已获得单车控制权");}
+        else if(op==4){resistanceCommand.response(physicalTarget,result==1,why);log(result==1?"阻力指令已接收，等待遥测确认目标 "+physicalTarget:why);}
+        if(controlGranted)flushPendingControl();
+    }
+    private void handleMachineStatus(byte[] v){
+        if(v==null||v.length==0)return;
+        int op=u8(v[0]);
+        if(op==7&&v.length>=3){int target=Math.round(s16(v[1],v[2])/10f);log("单车报告目标阻力 "+target+"；实际阻力以遥测为准");}
+        else log("单车状态 "+Arrays.toString(v));
+    }
 
     private void subscribeNext() {
         if (gatt == null) return;
@@ -600,8 +597,8 @@ public final class BleBike implements BikeSource {
         if (now - resMs      < STALE_MS && res       >= 0) { s.resistance = Math.round(res); s.resistanceValid = true; }
         if (now - distanceMs < STALE_MS) { s.distanceKm = distanceKm; s.distanceValid = true; }
         if (now - caloriesMs < STALE_MS) { s.calories = calories;   s.caloriesValid = true; }
-        final Sample f = s;
-        h.post(() -> { if (listener != null) listener.onData(f); });
+        final Sample f = s;final long observedResAt=resMs;
+        h.post(() -> { if(f.resistanceValid&&observedResAt>resistanceObservedAt){resistanceObservedAt=observedResAt;resistanceCommand.measured(f.resistance,SystemClock.elapsedRealtime());}if (listener != null) listener.onData(f); });
         log(src + " → " + fieldsSummary());
     }
 
@@ -609,9 +606,12 @@ public final class BleBike implements BikeSource {
     // FTMS 控制点：串行写入 + RequestControl 门控
     // ------------------------------------------------------------------
 
+    private int decodeResistanceCommand(byte[] p){return p.length>=3?Math.round(s16(p[1],p[2])/10f):p.length>=2?u8(p[1]):-1;}
+
     private void sendControl(byte[] payload, String what, boolean allowWithoutControl) {
         BluetoothGattCharacteristic ctrl = ctrlChar != null ? ctrlChar : findChar(FM_CONTROL);
         if (gatt == null || ctrl == null) { log("无 0x2AD9 控制点，无法下发：" + what); return; }
+        if(payload.length>0&&u8(payload[0])==4)pendingControl.removeIf(p->p.length>0&&u8(p[0])==4);
         if (!initialized || !controlPointSubscribed) {
             if(payload[0]!=0)pendingControl.add(payload);
             log("等待控制通道初始化："+what);return;
@@ -622,17 +622,18 @@ public final class BleBike implements BikeSource {
             ensureControlLater();
             return;
         }
-        if (writingControl) { pendingControl.add(payload); return; }
+        if (writingControl) {if(u8(payload[0])!=0)pendingControl.add(payload); return; }
         try {
             ctrl.setValue(payload);
             ctrl.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
             writingControl = true;waitingOpcode=u8(payload[0]);
+            if(waitingOpcode==4){inFlightResistance=decodeResistanceCommand(payload);resistanceCommand.written(inFlightResistance,SystemClock.elapsedRealtime());}
             h.removeCallbacks(controlTimeout);h.postDelayed(controlTimeout,5000);
             boolean ok = gatt.writeCharacteristic(ctrl);
             log(what + (ok ? " 已写入" : " 写入失败"));
-            if (!ok) writingControl = false;
+            if (!ok) {writingControl = false;if(waitingOpcode==4)resistanceCommand.fail(inFlightResistance,"阻力指令写入失败",true);waitingOpcode=-1;h.removeCallbacks(controlTimeout);}
         } catch (SecurityException e) {
-            writingControl = false;
+            writingControl = false;if(waitingOpcode==4)resistanceCommand.fail(inFlightResistance,"缺少蓝牙控制权限",false);waitingOpcode=-1;h.removeCallbacks(controlTimeout);
             log(what + " 失败：" + e.getMessage());
         }
     }
@@ -654,11 +655,12 @@ public final class BleBike implements BikeSource {
             ctrlChar.setValue(next);
             ctrlChar.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
             writingControl = true;waitingOpcode=u8(next[0]);
+            if(waitingOpcode==4){inFlightResistance=decodeResistanceCommand(next);resistanceCommand.written(inFlightResistance,SystemClock.elapsedRealtime());}
             h.removeCallbacks(controlTimeout);h.postDelayed(controlTimeout,5000);
             boolean ok = gatt.writeCharacteristic(ctrlChar);
             log("排队控制命令 op=0x" + Integer.toHexString(u8(next[0])) + (ok ? " 已写入" : " 写入失败"));
-            if (!ok) writingControl = false;
-        } catch (SecurityException e) { writingControl = false; }
+            if (!ok) {writingControl = false;if(waitingOpcode==4)resistanceCommand.fail(inFlightResistance,"阻力指令写入失败",true);waitingOpcode=-1;h.removeCallbacks(controlTimeout);}
+        } catch (SecurityException e) {writingControl=false;if(waitingOpcode==4)resistanceCommand.fail(inFlightResistance,"缺少蓝牙控制权限",false);waitingOpcode=-1;h.removeCallbacks(controlTimeout);}
     }
 
     @Override public boolean startWorkout() {
@@ -686,10 +688,11 @@ public final class BleBike implements BikeSource {
         }
         boolean supported = supportsResistanceTarget();
         boolean sent = false;
-        // 1) FTMS 0x04 目标阻力（0.1 分辨率 → ×10）
+        // M2M uses verified UINT8 whole levels; standard FTMS keeps SINT16 tenths.
         if (ctrlChar != null && supported) {
-            byte[] command=ResistanceScale.command(lv,resistanceMin,resistanceMaxSpec,resistanceInc);
-            sendControl(command,"FTMS 0x04 目标阻力 " + lv, false);
+            resistanceCommand.request(lv,SystemClock.elapsedRealtime());
+            byte[] command=ResistanceScale.commandForDevice(name,lv,resistanceMin,resistanceMaxSpec,resistanceInc);
+            sendControl(command,"FTMS 0x04 目标阻力 " + lv+" 数据="+Arrays.toString(command), false);
             sent = true;
         }
         lastWriteSent = sent;
@@ -708,10 +711,10 @@ public final class BleBike implements BikeSource {
     }
 
     @Override public boolean writeTargetPower(int watts) {
-        if (gatt == null || state != STATE_CONNECTED || ctrlChar == null) return false;
+        if (gatt == null || state != STATE_CONNECTED || ctrlChar == null || !supportsPowerTarget()) return false;
         int w = Math.max(0, Math.min(watts, 1000));
-        sendControl(new byte[]{0x06, (byte) (w & 0xFF), (byte) ((w >> 8) & 0xFF)},
-                "FTMS 0x06 目标功率 " + w + "W", false);
+        sendControl(new byte[]{0x05, (byte) (w & 0xFF), (byte) ((w >> 8) & 0xFF)},
+                "FTMS 0x05 目标功率 " + w + "W", false);
         return true;
     }
 
