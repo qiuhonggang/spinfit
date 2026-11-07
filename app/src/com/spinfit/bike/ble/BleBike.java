@@ -1,5 +1,6 @@
 package com.spinfit.bike.ble;
 
+import com.spinfit.bike.core.ResistanceScale;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothGatt;
@@ -90,10 +91,10 @@ public final class BleBike implements BikeSource {
         }
     };
     public String controlStatus(){return lastWriteMessage;}
-    public int displayResistance(int maximum){
-        if(actualRes<0)return -1;
-        return Math.round(Math.max(0,Math.min(1,(actualRes-resistanceMin)/Math.max(1,resistanceMaxSpec-resistanceMin)))*maximum);
-    }
+    /** Actual telemetry is already in the bike's units; never normalize to app settings. */
+    public int displayResistance(){return actualRes;}
+    public int resistanceMaximum(){return Math.max(1,(int)Math.floor(resistanceMaxSpec));}
+    public int resistanceMinimum(){return Math.max(0,(int)Math.ceil(resistanceMin));}
     private void probeNext(){
         if(gatt==null)return;
         UUID u=probes.poll();
@@ -677,7 +678,7 @@ public final class BleBike implements BikeSource {
     }
 
     @Override public WriteResult writeResistance(int level, int resistanceMax) {
-        int lv = Math.max(0, Math.min(level, resistanceMax));
+        int lv = Math.round(ResistanceScale.target(level,resistanceMin,resistanceMaxSpec,resistanceInc));
         if (gatt == null || state != STATE_CONNECTED) {
             lastWriteSent = false;
             lastWriteMessage = "未连接，阻力指令未下发";
@@ -687,12 +688,8 @@ public final class BleBike implements BikeSource {
         boolean sent = false;
         // 1) FTMS 0x04 目标阻力（0.1 分辨率 → ×10）
         if (ctrlChar != null && supported) {
-            float spec = Math.max(resistanceMin,resistanceMaxSpec);
-            float mappedLevel=resistanceMin+(lv/(float)Math.max(1,resistanceMax))*(spec-resistanceMin);
-            if(resistanceInc>0)mappedLevel=resistanceMin+Math.round((mappedLevel-resistanceMin)/resistanceInc)*resistanceInc;
-            int tenths = Math.round(Math.max(resistanceMin,Math.min(spec,mappedLevel))*10f);
-            sendControl(new byte[]{0x04, (byte) (tenths & 0xFF), (byte) ((tenths >> 8) & 0xFF)},
-                    "FTMS 0x04 目标阻力 " + lv + " (0.1单位=" + tenths + ")", false);
+            byte[] command=ResistanceScale.command(lv,resistanceMin,resistanceMaxSpec,resistanceInc);
+            sendControl(command,"FTMS 0x04 目标阻力 " + lv, false);
             sent = true;
         }
         lastWriteSent = sent;

@@ -24,6 +24,8 @@ public final class BikeSession {
     public void setDataListener(DataListener l){dataListener=l;}
     private void fire(int s,String m){for(StateListener l:new ArrayList<>(listeners))l.onState(s,m);}
     public String deviceName(){return device;}public boolean isDemo(){return demoMode;}public BikeSource source(){return source;}public BleBike ble(){return ble;}public DemoBike demoBike(){return demo;}
+    public int resistanceMax(){return ble!=null?ble.resistanceMaximum():settings.resistanceMax();}
+    public int resistanceMin(){return ble!=null?ble.resistanceMinimum():0;}
     public SessionEngine engine(){return engine;}public TrainingProgram program(){return program;}public Metrics last(){return last;}public void setLast(Metrics m){last=m;}
     public BikeSource.Sample lastSample(){
         if(sample==null)return null;
@@ -35,7 +37,7 @@ public final class BikeSession {
     public BleHeartRate heart(){return heart;}
     public int currentHeartRate(){if(heart!=null&&heart.bpm()>0)return heart.bpm();return fresh()&&sample.hrValid?sample.heartRate:-1;}
     public String heartSource(){if(heart!=null&&heart.bpm()>0)return heart.name();return fresh()&&sample.hrValid?(sample.simulated?"演示单车":"单车"):"未连接心率设备";}
-    public void connectHeart(Context c,String address,String name){init(c);disconnectHeart();heart=new BleHeartRate(context,address,name,()->{if(heart!=null&&heart.connected()&&(!heart.address().equals(settings.heartAddress())||!heart.name().equals(settings.heartName())))settings.rememberHeart(heart.address(),heart.name());fire(20,"心率设备状态已更新");});heart.connect();}
+    public void connectHeart(Context c,String address,String name){init(c);if(heart!=null&&heart.samePeer(address,name)&&heart.busy())return;disconnectHeart();heart=new BleHeartRate(context,address,name,()->{if(heart!=null&&heart.connected()&&(!heart.address().equals(settings.heartAddress())||!heart.name().equals(settings.heartName())))settings.rememberHeart(heart.address(),heart.name());fire(20,"心率设备状态已更新");});heart.connect();}
     public void disconnectHeart(){if(heart!=null){heart.disconnect();heart=null;}fire(20,"心率设备已断开");}public BikeSource.WriteResult lastWrite(){return write;}public void recordWrite(BikeSource.WriteResult r){write=r;}
     public long recordId(){return recordId;}public TelemetryStats stats(){return stats;}public boolean active(){return engine!=null&&engine.isRunning();}
     public boolean isConnected(){return source!=null&&source.isConnected();}
@@ -54,9 +56,9 @@ public final class BikeSession {
     public void disconnect(){if(active())return;if(source!=null)source.disconnect();source=null;demo=null;ble=null;sample=null;write=null;device="未连接单车";fire(BikeSource.STATE_DISCONNECTED,"单车已断开");}
     public void startProgram(TrainingProgram p){
         if(active()||!isConnected())return;
-        program=p;engine=new SessionEngine(p,settings.ftpW(),settings.maxHr(),settings.weightKg(),settings.resistanceMax());
+        program=p;engine=new SessionEngine(p,settings.ftpW(),settings.maxHr(),settings.weightKg(),resistanceMax());
         engine.setTimeScale(demoMode?settings.timeScale():1);engine.setAutoResistance(!p.freeRide&&settings.autoResistance());
-        engine.setManualResistance(sample!=null&&sample.resistanceValid?Math.min(settings.resistanceMax(),sample.resistance):0);
+        engine.setManualResistance(sample!=null&&sample.resistanceValid?Math.max(resistanceMin(),Math.min(resistanceMax(),sample.resistance)):0);
         stats=new TelemetryStats();if(sample!=null)stats.counters(sample.distanceValid?sample.distanceKm:-1,sample.caloriesValid?sample.calories:-1,false);
         recordId=store.begin(p,device,demoMode);saveError="";sentTarget=-1;dataPaused=false;engine.start();last=engine.snapshot();lastTick=SystemClock.elapsedRealtime();
         source.startWorkout();applyAuto();
@@ -83,9 +85,9 @@ public final class BikeSession {
         if(engine.isFinished()){source.stopWorkout();context.stopService(new Intent(context,WorkoutService.class));fire(10,"训练已保存");}
     }
     private void checkpoint(String status,BikeSource.Sample s){try{store.checkpoint(recordId,engine.snapshot(),stats,status,s);saveError="";}catch(RuntimeException e){saveError="记录保存失败，请检查手机存储空间";engine.pause();fire(11,saveError);}}
-    public void applyAuto(){if(engine==null||source==null||engine.isPaused()||!engine.isAutoResistance())return;int t=Math.round(engine.currentTargetResistance());if(t!=sentTarget){write=source.writeResistance(t,settings.resistanceMax());if(write!=null&&write.sent)sentTarget=t;}}
+    public void applyAuto(){if(engine==null||source==null||engine.isPaused()||!engine.isAutoResistance())return;int t=Math.round(engine.currentTargetResistance());if(t!=sentTarget){write=source.writeResistance(t,resistanceMax());if(write!=null&&write.sent)sentTarget=t;}}
     public void setAuto(boolean b){if(!active())return;if(!b)engine.setManualResistance(Math.round(engine.currentTargetResistance()));engine.setAutoResistance(b);sentTarget=-1;if(b)applyAuto();}
-    public void adjust(int level){if(!active()||engine.isPaused())return;engine.setAutoResistance(false);engine.setManualResistance(level);write=source.writeResistance(engine.getManualResistance(),settings.resistanceMax());}
+    public void adjust(int level){if(!active()||engine.isPaused())return;engine.setAutoResistance(false);engine.setManualResistance(Math.max(resistanceMin(),Math.min(resistanceMax(),level)));write=source.writeResistance(engine.getManualResistance(),resistanceMax());}
     public void pause(){if(!active())return;tick();if(!active())return;engine.pause();source.pauseWorkout();checkpoint("active",null);}
     public boolean resume(){if(!active()||!fresh())return false;engine.resume();dataPaused=false;lastTick=SystemClock.elapsedRealtime();if(sample!=null)stats.counters(sample.distanceValid?sample.distanceKm:-1,sample.caloriesValid?sample.calories:-1,false);source.startWorkout();sentTarget=-1;applyAuto();return true;}
     public boolean dataPaused(){return dataPaused;}
