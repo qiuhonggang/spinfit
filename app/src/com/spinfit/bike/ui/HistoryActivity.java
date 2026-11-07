@@ -1,0 +1,16 @@
+package com.spinfit.bike.ui;
+import android.app.*;import android.content.*;import android.os.Bundle;import android.widget.*;
+import com.spinfit.bike.app.*;import java.util.*;import java.text.SimpleDateFormat;
+public final class HistoryActivity extends Activity {
+ @Override protected void onCreate(Bundle b){super.onCreate(b);BikeSession.get().init(this);LinearLayout r=Ui.root(this);populate(this,r,false);Ui.screen(this,r,Ui.nav(this,2,n->Ui.goTab(this,n)));}
+ public static void populate(Activity a,LinearLayout root,boolean demos){
+  root.addView(Ui.eyebrow(a,"YOUR PROGRESS, SAVED"));root.addView(Ui.title(a,"每一次，都算数。"));root.addView(Ui.sub(a,"训练记录保存在这台手机，随时回看"));Ui.gap(a,root,22);
+  LinearLayout toggle=Ui.row(a);Button real=Ui.button(a,"真实骑行",demos?Ui.CARD:Ui.ACCENT,demos?Ui.DIM:Ui.INK),demo=Ui.button(a,"演示记录",demos?Ui.ACCENT:Ui.CARD,demos?Ui.INK:Ui.DIM);Ui.weight(toggle,real);LinearLayout.LayoutParams dp=new LinearLayout.LayoutParams(0,-2,1);dp.leftMargin=Ui.dp(a,8);toggle.addView(demo,dp);root.addView(toggle);real.setOnClickListener(v->{root.removeAllViews();populate(a,root,false);});demo.setOnClickListener(v->{root.removeAllViews();populate(a,root,true);});Ui.gap(a,root,22);
+  WorkoutStore store=BikeSession.get().store();List<WorkoutStore.Ride> rides=store.list(demos);int seconds=0;for(WorkoutStore.Ride r:rides)seconds+=r.seconds;
+  LinearLayout stats=Ui.row(a);Ui.weight(stats,Ui.metric(a,"累计训练",""+rides.size(),"次"));Ui.weight(stats,Ui.metric(a,"累计时长",""+(seconds/60),"分钟"));root.addView(stats);Ui.gap(a,root,26);
+  if(rides.isEmpty()){LinearLayout empty=Ui.card(a);Visuals.Icon icon=new Visuals.Icon(a,"chart",Ui.ACCENT);empty.addView(icon,new LinearLayout.LayoutParams(Ui.dp(a,48),Ui.dp(a,48)));Ui.gap(a,empty,20);empty.addView(Ui.number(a,demos?"先体验，再开骑。":"你的第一骑，从现在开始。",21,Ui.TEXT));Ui.gap(a,empty,12);empty.addView(Ui.sub(a,demos?"从连接页选择演示单车，体验完整训练流程。":"完成一次骑行后，时长、数据曲线与课程都会留在这里。"));Ui.gap(a,empty,22);Button go=Ui.primary(a,demos?"体验演示训练":"选择我的第一节课  →");go.setOnClickListener(v->{if(demos)a.startActivity(new Intent(a,ScanActivity.class));else Ui.goTab(a,1);});empty.addView(go);root.addView(empty);return;}
+  String previous="";SimpleDateFormat month=new SimpleDateFormat("yyyy 年 M 月",Locale.CHINA),date=new SimpleDateFormat("MM.dd  HH:mm",Locale.CHINA);
+  for(WorkoutStore.Ride r:rides){String m=month.format(new Date(r.started));if(!m.equals(previous)){TextView label=Ui.tv(a,m,14,Ui.DIM,true);Ui.add(a,root,label,14);previous=m;}LinearLayout c=Ui.card(a);LinearLayout top=Ui.row(a);Ui.weight(top,Ui.tv(a,date.format(new Date(r.started)),12,Ui.DIM,false));top.addView(Ui.pill(a,r.demo?"演示 · "+status(r.status):status(r.status),r.status.equals("interrupted")?Ui.WARN:Ui.ACCENT));c.addView(top);Ui.gap(a,c,14);c.addView(Ui.tv(a,r.name,20,Ui.TEXT,true));Ui.gap(a,c,16);LinearLayout details=Ui.row(a);Ui.weight(details,Ui.metric(a,"骑行时间",Ui.time(r.seconds),""));Ui.weight(details,Ui.metric(a,"里程",Ui.val(r.distance,2),"km"));c.addView(details);Ui.gap(a,c,14);c.addView(Ui.sub(a,"均速 "+Ui.val(r.avgSpeed,1)+" km/h   ·   查看详情  →"));Ui.touch(c,Ui.CARD,22);c.setOnClickListener(v->SummaryActivity.open(a,r.id,false));Ui.add(a,root,c,14);}
+ }
+ public static String status(String s){return "completed".equals(s)?"已完成":"interrupted".equals(s)?"意外中断":"active".equals(s)?"进行中":"已保存";}
+}

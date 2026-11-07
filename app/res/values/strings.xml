@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">SpinFit 动感单车</string>
+    <string name="scan_title">连接单车</string>
+    <string name="programs_title">科学训练计划</string>
+    <string name="ride_title">骑行中</string>
+    <string name="settings_title">参数设置</string>
+    <string name="summary_title">训练总结</string>
+
+    <color name="yesoul_red">#FFD7F86B</color>
+    <color name="bg">#FF101412</color>
+    <color name="card">#FF1B2130</color>
+    <color name="card2">#FF232C3D</color>
+    <color name="accent">#FF00D3A7</color>
+    <color name="accent2">#FF4C8DFF</color>
+    <color name="warn">#FFFFB74D</color>
+    <color name="text">#FFF2F5FA</color>
+    <color name="text_dim">#FF96A0B5</color>
+    <color name="divider">#FF2C3648</color>
+
+    <style name="AppTheme" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/bg</item>
+        <item name="android:colorAccent">@color/yesoul_red</item>
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">#101412</item>
+        <item name="android:navigationBarColor">#101412</item>
+    </style>
+</resources>

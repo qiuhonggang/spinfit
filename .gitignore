@@ -1,0 +1,42 @@
+# OS/editor metadata
+.DS_Store
+.idea/
+.vscode/
+
+# Signing material and local configuration
+*.keystore
+*.jks
+*.p12
+*.pfx
+*.pem
+*.key
+.env
+.env.*
+!.env.example
+local.properties
+
+# Generated Android outputs and downloaded tool archives
+/app/bin/
+/app/gen/
+/app/obj/
+/buildtest/bin/
+/buildtest/gen/
+/buildtest/obj/
+*.apk
+*.aab
+*.idsig
+*.dex
+*.class
+*.zip
+
+# Local runtime data and reverse-engineering artifacts
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+/analysis/
+/REA-分析报告.md
+/research.md
+/交付报告.md
+/README-v2*.txt
