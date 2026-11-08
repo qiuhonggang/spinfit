@@ -25,6 +25,25 @@ public class DeviceChecks extends Instrumentation{
   Field commandField=BleBike.class.getDeclaredField("resistanceCommand");commandField.setAccessible(true);ResistanceCommandState command=(ResistanceCommandState)commandField.get(bike);command.request(15,1);command.written(15,2);command.measured(15,3);command.measured(16,4);
   BikeSession owner=BikeSession.get();TrainingProgram free=ProgramLibrary.byId("free");SessionEngine handoff=new SessionEngine(free,180,190,68,100);handoff.start();handoff.setAutoResistance(true);BikeSource.Sample knob=BikeSource.Sample.measured();knob.resistance=16;knob.resistanceValid=true;
   field(bike,"state",BikeSource.STATE_CONNECTED);field(owner,"source",bike);field(owner,"ble",bike);field(owner,"engine",handoff);field(owner,"program",free);field(owner,"context",getTargetContext());field(owner,"store",store);field(owner,"stats",new TelemetryStats());field(owner,"sample",knob);field(owner,"sampleAt",android.os.SystemClock.elapsedRealtime());field(owner,"lastTick",android.os.SystemClock.elapsedRealtime());field(owner,"recordId",id);owner.tick();check(!handoff.isAutoResistance()&&handoff.getManualResistance()==16,"physical knob hands auto ride to manual at actual resistance");
+  final String prefsName="spinfit_stage_test_settings";
+  android.content.Context isolatedSettings=new android.content.ContextWrapper(getTargetContext()){
+   @Override public android.content.SharedPreferences getSharedPreferences(String n,int mode){return getBaseContext().getSharedPreferences(prefsName,mode);}
+  };
+  Settings testSettings=new Settings(isolatedSettings);testSettings.setResistanceMax(100);owner.init(testSettings);field(owner,"ble",null);
+  TrainingProgram hiit=ProgramLibrary.byId("hiit30");SessionEngine allStages=new SessionEngine(hiit,180,190,68,100);allStages.start();
+  RecordingBike recorder=new RecordingBike(allStages);field(owner,"source",recorder);field(owner,"engine",allStages);field(owner,"program",hiit);field(owner,"sentTarget",-1);
+  owner.applyAuto();for(int second=1;second<=1800;second++){allStages.advance(1,200,90,150,0);owner.applyAuto();}
+  int[] expectedTargets={15,45,15,45,15,45,15,45,15,45,15,45,15,10};
+  int[] expectedTimes={0,420,480,600,660,780,840,960,1020,1140,1200,1320,1380,1500};
+  check(recorder.targets.size()==14,"HIIT sends one target per changed phase, not one per telemetry tick");
+  for(int j=0;j<14;j++){check(recorder.targets.get(j)==expectedTargets[j],"HIIT physical target at phase "+j);check(recorder.seconds.get(j)==expectedTimes[j],"HIIT switches resistance exactly at boundary "+j);}
+  check(allStages.isFinished(),"HIIT natural completion at 1800 seconds");
+  SessionEngine transitions=new SessionEngine(hiit,180,190,68,100);transitions.start();recorder=new RecordingBike(transitions);field(owner,"source",recorder);field(owner,"engine",transitions);field(owner,"sentTarget",-1);owner.applyAuto();
+  transitions.advance(419,100,80,130,15);transitions.pause();transitions.advance(2,100,80,130,15);owner.applyAuto();check(recorder.targets.size()==1&&transitions.snapshot().elapsedSec==419,"pause before a phase freezes time and blocks resistance writes");
+  transitions.resume();field(owner,"sampleAt",android.os.SystemClock.elapsedRealtime());field(owner,"lastTick",android.os.SystemClock.elapsedRealtime()-1000);field(owner,"stats",new TelemetryStats());owner.tick();check(recorder.targets.size()==2&&recorder.targets.get(1)==45&&transitions.snapshot().stageIndex==1,"session timer tick crosses into hard interval and automatically sends its target");
+  owner.setAuto(false);transitions.advance(180,100,80,130,45);owner.applyAuto();check(recorder.targets.size()==2&&!transitions.isAutoResistance(),"manual mode survives later course phases without automatic writes");
+  owner.setAuto(true);check(recorder.targets.size()==3&&recorder.targets.get(2)==45,"explicitly resuming auto immediately applies current phase");
+  getTargetContext().deleteSharedPreferences(prefsName);
   final BikeSource.Sample[] missing=new BikeSource.Sample[1];BleBike minimal=new BleBike(getTargetContext(),"00:00:00:00:00:00","fixture",1);minimal.setListener(new BikeSource.Listener(){public void onState(int a,String b){}public void onLog(String l){}public void onData(BikeSource.Sample v){missing[0]=v;}});parse.invoke(minimal,BleBike.INDOOR_BIKE,new byte[]{0,0,0,0});waitForIdleSync();check(missing[0].speedValid&&!missing[0].powerValid&&!missing[0].hrValid&&!missing[0].caloriesValid&&!missing[0].distanceValid,"unreported fields not fabricated");
   String migration="spinfit_migration_tests.db";getTargetContext().deleteDatabase(migration);android.database.sqlite.SQLiteDatabase legacy=getTargetContext().openOrCreateDatabase(migration,0,null);
   legacy.execSQL("CREATE TABLE rides(id INTEGER PRIMARY KEY AUTOINCREMENT,started INTEGER,name TEXT,program TEXT,device TEXT,demo INTEGER,status TEXT,seconds INTEGER DEFAULT 0,distance REAL,calories REAL,avg_power REAL,avg_cad REAL,avg_hr REAL,max_power REAL,max_hr REAL)");
@@ -33,4 +52,15 @@ public class DeviceChecks extends Instrumentation{
   WorkoutStore migrated=new WorkoutStore(getTargetContext(),migration);WorkoutStore.Ride older=migrated.get(1);check(older.seconds==54&&older.status.equals("saved"),"legacy record survives migration");near(older.distance,.21f,"legacy total distance retained");near(older.avgPower,37,"legacy power retained");near(older.avgSpeed,15,"legacy sample average speed backfilled");near(older.maxSpeed,20,"legacy maximum speed backfilled");check(older.speedBasis.equals("legacy_samples"),"legacy averaging method explicit");check(migrated.points(1,"distance").get(0)[1]==-1,"missing historical distance not fabricated");check(migrated.points(1,"speed").size()==3,"legacy speed curve preserved");migrated.close();getTargetContext().deleteDatabase(migration);
   result.putString("result","PASS: "+count+" Android assertions (SQLite persistence, recovery, protocol fixtures)");finish(-1,result);
  }catch(Throwable e){result.putString("failure",e.toString());finish(0,result);}finally{if(store!=null)store.close();getTargetContext().deleteDatabase("spinfit_isolated_tests.db");}}
+ static final class RecordingBike implements BikeSource{
+  final SessionEngine engine;final List<Integer> targets=new ArrayList<>(),seconds=new ArrayList<>();
+  RecordingBike(SessionEngine e){engine=e;}
+  public void setListener(Listener l){} public void connect(){} public void disconnect(){}
+  public boolean isConnected(){return true;} public int type(){return TYPE_FTMS;}
+  public String name(){return "Isolated stage fixture";} public String address(){return "00:00:00:00:00:00";}
+  public WriteResult writeResistance(int level,int max){if(max!=100)throw new AssertionError("physical scale");targets.add(level);seconds.add(engine.snapshot().elapsedSec);return new WriteResult(true,true,level,"");}
+  public boolean writeTargetPower(int watts){return false;}public boolean startWorkout(){return true;}public boolean pauseWorkout(){return true;}public boolean stopWorkout(){return true;}
+  public boolean supportsResistanceTarget(){return true;}public boolean hasControl(){return true;}public int actualResistance(){return -1;}public String diagnostics(){return "Fixture";}
+ }
+
 }

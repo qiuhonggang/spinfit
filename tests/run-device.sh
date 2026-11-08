@@ -10,10 +10,10 @@ ADB_ARGS=()
 if [ "$#" -gt 0 ]; then ADB_ARGS=(-s "$1"); fi
 mkdir -p "$TEST_OUT/obj" "$TEST_OUT/stage"
 cat > "$TEST_OUT/AndroidManifest.xml" <<'XML'
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.spinfit.bike.tests"><uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34"/><application android:label="SpinFit checks"/><instrumentation android:name="com.spinfit.bike.tests.DeviceChecks" android:targetPackage="com.spinfit.bike"/><instrumentation android:name="com.spinfit.bike.tests.DeviceAudit" android:targetPackage="com.spinfit.bike"/></manifest>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.spinfit.bike.tests"><uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34"/><application android:label="SpinFit checks"/><instrumentation android:name="com.spinfit.bike.tests.DeviceChecks" android:targetPackage="com.spinfit.bike"/><instrumentation android:name="com.spinfit.bike.tests.DeviceAudit" android:targetPackage="com.spinfit.bike"/><instrumentation android:name="com.spinfit.bike.tests.UiChecks" android:targetPackage="com.spinfit.bike"/></manifest>
 XML
 "$TEST_BT/aapt2" link -I "$TEST_JAR" --manifest "$TEST_OUT/AndroidManifest.xml" -o "$TEST_OUT/base.apk"
-javac -encoding UTF-8 -source 8 -target 8 -cp "$TEST_JAR:$PWD/app/obj" -d "$TEST_OUT/obj" tests/DeviceChecks.java tests/DeviceAudit.java
+javac -encoding UTF-8 -source 8 -target 8 -cp "$TEST_JAR:$PWD/app/obj" -d "$TEST_OUT/obj" tests/DeviceChecks.java tests/DeviceAudit.java tests/UiChecks.java
 find "$TEST_OUT/obj" -name '*.class' > "$TEST_OUT/classes.txt"
 "$TEST_BT/d8" --lib "$TEST_JAR" --classpath app/bin/SpinFit.apk --min-api 26 --output "$TEST_OUT/stage" @"$TEST_OUT/classes.txt"
 (cd "$TEST_OUT/stage" && zip -q "$TEST_OUT/base.apk" classes.dex)

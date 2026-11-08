@@ -99,6 +99,7 @@ public final class BleBike implements BikeSource {
         }
     };
     public String controlStatus(){return resistanceCommand.target()>=0?resistanceCommand.message(SystemClock.elapsedRealtime()):lastWriteMessage;}
+    public boolean resistanceControlVerified(){return resistanceCommand.verified();}
     public boolean resistanceNeedsRetry(int target){return resistanceCommand.shouldRetry(target,SystemClock.elapsedRealtime());}
     public boolean resistanceOverridden(){return resistanceCommand.overridden();}
     public void resetResistanceCommand(){resistanceCommand.clear();pendingControl.removeIf(p->p.length>0&&u8(p[0])==4);}

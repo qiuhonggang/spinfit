@@ -15,8 +15,16 @@ public final class ProgramLibrary {
  a.add(p("tempo","节奏进阶","35 分钟 · 两段可控的节奏练习","已有稳定骑行基础后尝试。主段体感约 6 / 10；功率目标根据个人 FTP 换算，阻力档位只作起点。",s("渐进热身",7,45,15,75,"先找到舒适呼吸"),s("节奏一",9,80,38,85,"专注稳定输出，不要冲刺"),s("组间恢复",5,45,15,75,"放轻阻力，恢复呼吸"),s("节奏二",9,80,38,85,"保持坐姿，均匀踩踏"),s("慢踩放松",5,35,10,65,"逐步放轻")));
  a.add(p("interval","有氧间歇","30 分钟 · 4 组一分钟提速","进阶训练，主段体感约 7 / 10，不要求全力。每周最多安排 1–2 次较高强度课，中间至少隔一天轻松活动或休息。",s("渐进热身",8,45,15,75,"充分热身，逐步进入状态"),s("提速一",1,95,42,90,"稳定提速，保持动作可控"),s("恢复一",3,45,15,75,"轻松踩踏"),s("提速二",1,95,42,90,"不必全力，呼吸加深"),s("恢复二",3,45,15,75,"放松肩膀"),s("提速三",1,95,42,90,"坐姿稳定，保持顺畅"),s("恢复三",3,45,15,75,"恢复舒适呼吸"),s("提速四",1,95,42,90,"最后一组，动作不变形"),s("恢复四",3,45,15,75,"逐渐放轻"),s("慢踩放松",6,35,10,65,"耐心收尾，不要突然停下")));
  a.add(p("sweetspot","甜点区间","40 分钟 · 2 × 8 分钟专注输出","适合已知可靠 FTP 且有训练基础者。主段约 88% FTP，体感约 7 / 10。若目标不适合，直接切换手动降低阻力。",s("渐进热身",10,50,18,80,"充分热身，准备主训练"),s("专注输出一",8,88,40,85,"均匀输出，不追求峰值"),s("组间恢复",4,45,15,75,"缓慢恢复"),s("专注输出二",8,88,40,85,"保持同样节奏"),s("慢踩放松",10,35,10,65,"逐渐降低呼吸与心率")));
+ List<Segment> hiit=new ArrayList<>();
+ hiit.add(s("渐进热身",7,45,15,75,"轻松进入状态，最后两分钟逐渐加快踏频"));
+ for(int i=1;i<=6;i++){
+  hiit.add(s("高强度 "+i+"/6",1,115,45,90,"体感 8–9 / 10，保持坐姿与动作稳定，不做全力冲刺"));
+  hiit.add(s("主动恢复 "+i+"/6",2,45,15,70,"降低阻力，轻松踩踏，让呼吸逐渐恢复"));
+ }
+ hiit.add(s("慢踩放松",5,35,10,65,"逐步降低输出，不要突然停下"));
+ a.add(p("hiit30","HIIT 30 分钟","6 组 · 1 分钟高强度 / 2 分钟恢复","适合已有稳定骑行基础的人。7 分钟热身，6 组高强度与主动恢复，最后放松 5 分钟。高强度段参考 115% FTP，体感 8–9 / 10；恢复段应明显轻松。自动阻力按阶段调整参考档位，不是功率闭环；若 FTP 未实测，请以体感为准，无法保持动作时切换手动降低阻力。两次高强度课之间安排恢复日。",hiit.toArray(new Segment[0])));
  return Collections.unmodifiableList(a);}
- public static boolean advanced(TrainingProgram p){return p.id.equals("tempo")||p.id.equals("interval")||p.id.equals("sweetspot");}
+ public static boolean advanced(TrainingProgram p){return p.id.equals("tempo")||p.id.equals("interval")||p.id.equals("sweetspot")||p.id.equals("hiit30");}
  public static String level(TrainingProgram p){return p.freeRide?"自主":advanced(p)?"进阶":"基础";}
- public static String effort(TrainingProgram p){return p.freeRide?"自主强度":p.id.equals("beginner")||p.id.equals("recovery")?"轻松":advanced(p)?"中高强度":"中等强度";}
+ public static String effort(TrainingProgram p){return p.id.equals("hiit30")?"高强度":p.freeRide?"自主强度":p.id.equals("beginner")||p.id.equals("recovery")?"轻松":advanced(p)?"中高强度":"中等强度";}
 }

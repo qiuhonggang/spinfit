@@ -4,7 +4,7 @@ public class CoreChecks {
  static void check(boolean b,String name){if(!b)throw new AssertionError(name);checks++;}
  static void near(float a,float b,String name){check(Math.abs(a-b)<.015,name+" "+a+" vs "+b);}
  public static void main(String[] args){
-  check(ProgramLibrary.all().size()==8,"curated count");
+  check(ProgramLibrary.all().size()==9,"curated count");
   for(TrainingProgram p:ProgramLibrary.all()){
    int sum=0;for(Segment s:p.segments){check(s.durationSec>0,"positive stage");check(s.targetCadence>=60&&s.targetCadence<=95,"sensible cadence");sum+=s.durationSec;}
    check(sum==p.totalSeconds(),"duration sum");
@@ -39,6 +39,9 @@ public class CoreChecks {
   check(java.util.Arrays.equals(ResistanceScale.commandForDevice("YS_M2M_08482",100,0,100,1),new byte[]{4,100}),"M2M target 100 never multiplies to 1000 or wraps");
   check(java.util.Arrays.equals(ResistanceScale.commandForDevice("Other FTMS Bike",15,0,100,1),new byte[]{4,(byte)150,0}),"ordinary FTMS retains standard tenths encoding");
   command.request(10,60000);command.written(10,60100);command.response(10,false,"参数错误");command.measured(10,60200);check(!command.verified(),"rejected procedure cannot be verified by incidental matching measurement");
+  TrainingProgram hiit=ProgramLibrary.byId("hiit30");check(hiit.totalSeconds()==1800&&hiit.segments.length==14,"HIIT exact 30 minutes, warmup + 6 on/off pairs + cooldown");
+  check(hiit.segments[0].durationSec==420&&hiit.segments[13].durationSec==300,"HIIT warmup and cooldown retained");
+  for(int j=0;j<6;j++){Segment on=hiit.segments[1+j*2],off=hiit.segments[2+j*2];check(on.durationSec==60&&on.targetPowerPct==115&&on.targetResistancePct==45,"HIIT hard interval");check(off.durationSec==120&&off.targetPowerPct==45&&off.targetResistancePct==15,"HIIT active recovery");}
   System.out.println("PASS: "+checks+" core assertions");
  }
 }
