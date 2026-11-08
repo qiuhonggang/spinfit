@@ -18,6 +18,7 @@ public final class Visuals {
    case "arrow":q.moveTo(5,12);q.lineTo(19,12);q.moveTo(13,6);q.lineTo(19,12);q.lineTo(13,18);break;
    case "settings":c.drawCircle(12,12,4,p);c.drawCircle(12,12,9,p);for(int i=0;i<8;i++){double t=i*Math.PI/4;c.drawLine(12+(float)Math.cos(t)*9,12+(float)Math.sin(t)*9,12+(float)Math.cos(t)*11,12+(float)Math.sin(t)*11,p);}break;
    case "bluetooth":q.moveTo(7,7);q.lineTo(17,17);q.lineTo(12,22);q.lineTo(12,2);q.lineTo(17,7);q.lineTo(7,17);break;
+   case "close":q.moveTo(6,6);q.lineTo(18,18);q.moveTo(18,6);q.lineTo(6,18);break;
    case "check":q.moveTo(5,12);q.lineTo(10,17);q.lineTo(20,6);break;
    case "bike":c.drawCircle(6,16,4,p);c.drawCircle(19,16,4,p);q.moveTo(6,16);q.lineTo(10,8);q.lineTo(16,8);q.lineTo(19,16);q.moveTo(6,16);q.lineTo(13,16);q.lineTo(9,6);q.lineTo(6,6);q.moveTo(13,16);q.lineTo(16,8);q.moveTo(15,4);q.lineTo(18,4);q.lineTo(16,8);break;
    default:c.drawCircle(12,12,8,p);

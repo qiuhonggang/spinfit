@@ -9,7 +9,7 @@ import com.spinfit.bike.ble.*;
 import com.spinfit.bike.core.*;
 import java.util.*;
 public final class MainActivity extends Activity implements BikeSession.StateListener{
- private AlertDialog coursePicker;private int selectedCourse;private boolean restorePicker;
+ private CoursePicker coursePicker;private int selectedCourse;private boolean restorePicker;
  private int tab=0;private BikeSession session;private TextView device,deviceSub;private final Handler h=new Handler();
  private final Runnable refresh=new Runnable(){public void run(){updateDevice();h.postDelayed(this,1500);}};
  @Override protected void onCreate(Bundle b){super.onCreate(b);session=BikeSession.get();session.init(this);tab=b!=null?b.getInt("tab",0):getIntent().getIntExtra("tab",0);session.addStateListener(this);if(b!=null){selectedCourse=b.getInt("selected_course",0);restorePicker=b.getBoolean("course_picker",false);}}
@@ -32,12 +32,8 @@ public final class MainActivity extends Activity implements BikeSession.StateLis
   if(session.active()){startActivity(new Intent(this,RideActivity.class));return;}
   List<TrainingProgram> courses=ProgramLibrary.all();
   if(!restoring||selectedCourse<0||selectedCourse>=courses.size())selectedCourse=0;
-  String[] labels=new String[courses.size()];
-  for(int i=0;i<courses.size();i++){TrainingProgram p=courses.get(i);labels[i]=p.name+"\n"+(p.freeRide?"不限时":p.totalSeconds()/60+" 分钟")+" · "+p.resistanceModeLabel();}
-  coursePicker=new AlertDialog.Builder(this).setTitle("选择骑行课程")
-   .setSingleChoiceItems(labels,selectedCourse,(dialog,which)->selectedCourse=which)
-   .setNegativeButton("取消",null).setPositiveButton("下一步",(dialog,which)->ProgramDetailActivity.open(this,courses.get(selectedCourse).id)).create();
-  coursePicker.setOnDismissListener(dialog->coursePicker=null);coursePicker.show();
+  coursePicker=new CoursePicker(this,courses,selectedCourse,index->selectedCourse=index,index->ProgramDetailActivity.open(this,courses.get(index).id));
+  coursePicker.setOnDismissListener(dialog->{if(coursePicker==dialog)coursePicker=null;});coursePicker.show();
  }
  private void updateDevice(){if(device==null)return;if(session.active()){device.setText(session.engine().isPaused()?"训练已暂停":"训练正在进行");deviceSub.setText("返回骑行页面可继续操作");}else{device.setText(session.isConnected()?session.deviceName():"连接你的单车");deviceSub.setText(session.isConnected()?(session.isDemo()?"演示模式 · 模拟数据":"已连接 · "+(session.fresh()?"数据正在同步":"等待踩踏唤醒")):"连接后，即可同步骑行数据");}}
  @Override public void onState(int s,String m){if(s<0)return;runOnUiThread(this::updateDevice);}

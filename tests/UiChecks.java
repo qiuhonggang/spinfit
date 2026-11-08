@@ -61,16 +61,23 @@ public final class UiChecks extends Instrumentation {
         Activity a=waitForMonitorWithTimeout(monitor,5000);removeMonitor(monitor);
         check(a!=null,"home activity launch");Thread.sleep(650);activity=a;return a;
     }
-    private AlertDialog picker()throws Exception{Field f=MainActivity.class.getDeclaredField("coursePicker");f.setAccessible(true);return (AlertDialog)f.get(activity);}
+    private Dialog picker()throws Exception{Field f=MainActivity.class.getDeclaredField("coursePicker");f.setAccessible(true);return (Dialog)f.get(activity);}
     private void openPicker(){TextView start=text(activity.getWindow().getDecorView(),"开始骑行  →");check(start!=null,"home start button");start.performClick();}
+    private void checkSheet()throws Exception{
+        View root=picker().getWindow().getDecorView();noHorizontalOverflow(root);
+        TextView action=text(root,"查看课程  →");Rect bounds=new Rect();
+        check(action!=null&&action.getGlobalVisibleRect(bounds)&&bounds.height()>=Ui.dp(activity,48),"fixed sheet action visible at current display settings");
+        check(action.getWidth()>=Ui.dp(activity,48),"sheet action touch width");
+    }
+    private void checkSheetOnMain(){try{checkSheet();}catch(Exception error){throw new RuntimeException(error);}}
     private void nextCourse(String expected)throws Exception{
         ActivityMonitor monitor=addMonitor(ProgramDetailActivity.class.getName(),null,false);
-        ui(()->{try{picker().getButton(AlertDialog.BUTTON_POSITIVE).performClick();}catch(Exception e){throw new RuntimeException(e);}});
+        ui(()->{try{text(picker().getWindow().getDecorView(),"查看课程  →").performClick();}catch(Exception e){throw new RuntimeException(e);}});
         Activity detail=waitForMonitorWithTimeout(monitor,5000);removeMonitor(monitor);
         check(detail!=null&&expected.equals(detail.getIntent().getStringExtra("id")),"chooser routes selected course to details: "+expected);activity=detail;
     }
     private void capture(String name)throws Exception{
-        File file=new File(getTargetContext().getExternalFilesDir("validation"),"ui26-"+name+".png");
+        File file=new File(getTargetContext().getExternalFilesDir("validation"),"ui27-"+name+".png");
         Bitmap bitmap=getUiAutomation().takeScreenshot();check(bitmap!=null,"screenshot "+name);
         try(FileOutputStream out=new FileOutputStream(file)){bitmap.compress(Bitmap.CompressFormat.PNG,100,out);}bitmap.recycle();
         result.putString(name,file.getAbsolutePath());Bundle progress=new Bundle();progress.putString("ui_case",name);sendStatus(0,progress);
@@ -84,9 +91,18 @@ public final class UiChecks extends Instrumentation {
         prefs.setResistanceMax(100);prefs.setTimeScale(1);prefs.setAutoResistance(true);
         owner=BikeSession.get();owner.init(prefs);field(owner,"context",target);field(owner,"store",store);
         shell("settings put system accelerometer_rotation 0");shell("settings put system user_rotation 0");shell("settings put system font_scale 1.0");
-        openMain();ui(()->{openPicker();try{check(picker().getListView().getCount()==ProgramLibrary.all().size(),"picker lists every course");check(picker().getListView().getCheckedItemPosition()==0,"new picker defaults to free ride");}catch(Exception e){throw new RuntimeException(e);}});Thread.sleep(350);capture("course-picker");
-        ui(()->{try{ListView list=picker().getListView();int i=ProgramLibrary.all().size()-1;list.setItemChecked(i,true);list.performItemClick(null,i,list.getAdapter().getItemId(i));}catch(Exception e){throw new RuntimeException(e);}});nextCourse("hiit30");
-        openMain();ui(()->{openPicker();try{check(picker().getListView().getCheckedItemPosition()==0,"fresh picker does not retain the previous HIIT selection");picker().getButton(AlertDialog.BUTTON_NEGATIVE).performClick();openPicker();check(picker().getListView().getCheckedItemPosition()==0,"cancel and reopen defaults to free ride");}catch(Exception e){throw new RuntimeException(e);}});nextCourse("free");
+        openMain();ui(()->{openPicker();try{View root=picker().getWindow().getDecorView();for(TrainingProgram p:ProgramLibrary.all())check(root.findViewWithTag(p.id)!=null,"picker lists course "+p.id);check(root.findViewWithTag("free").isSelected(),"new picker defaults to free ride");}catch(Exception error){throw new RuntimeException(error);}});
+        Thread.sleep(350);ui(this::checkSheetOnMain);capture("course-picker");
+        ui(()->{try{View card=picker().getWindow().getDecorView().findViewWithTag("hiit30");card.requestRectangleOnScreen(new Rect(0,0,card.getWidth(),card.getHeight()),true);}catch(Exception error){throw new RuntimeException(error);}});Thread.sleep(250);
+        ui(()->{try{View root=picker().getWindow().getDecorView(),card=root.findViewWithTag("hiit30");Rect bounds=new Rect();check(card.getGlobalVisibleRect(bounds)&&bounds.height()==card.getHeight(),"last course is reachable in scroll area above fixed footer");card.performClick();check(card.isSelected()&&!root.findViewWithTag("free").isSelected(),"card selection is exclusive");check(text(root,"已选 · HIIT 30 分钟")!=null,"footer reflects selected course");}catch(Exception error){throw new RuntimeException(error);}});Thread.sleep(150);capture("picker-selected");
+        ActivityMonitor recreateMonitor=addMonitor(MainActivity.class.getName(),null,false);ui(()->activity.recreate());Activity recreated=waitForMonitorWithTimeout(recreateMonitor,5000);removeMonitor(recreateMonitor);check(recreated!=null,"home recreated while sheet open");activity=recreated;Thread.sleep(650);
+        ui(()->{try{check(picker().isShowing()&&picker().getWindow().getDecorView().findViewWithTag("hiit30").isSelected(),"open sheet preserves selection across activity recreation");}catch(Exception error){throw new RuntimeException(error);}});nextCourse("hiit30");
+        openMain();ui(()->{openPicker();try{check(picker().getWindow().getDecorView().findViewWithTag("free").isSelected(),"fresh picker does not retain the previous HIIT selection");picker().dismiss();openPicker();check(picker().getWindow().getDecorView().findViewWithTag("free").isSelected(),"cancel and reopen defaults to free ride");}catch(Exception error){throw new RuntimeException(error);}});nextCourse("free");
+        shell("settings put global window_animation_scale 0");shell("settings put global transition_animation_scale 0");shell("settings put global animator_duration_scale 0");
+        shell("settings put system font_scale 2.0");Thread.sleep(500);openMain();ui(this::openPicker);Thread.sleep(350);ui(this::checkSheetOnMain);capture("picker-large-text");ui(()->{try{picker().dismiss();}catch(Exception e){throw new RuntimeException(e);}});
+        shell("settings put system font_scale 1.0");shell("settings put system user_rotation 1");Thread.sleep(500);openMain();ui(this::openPicker);Thread.sleep(350);ui(this::checkSheetOnMain);capture("picker-landscape");ui(()->{try{picker().dismiss();}catch(Exception e){throw new RuntimeException(e);}});
+        shell("settings put system user_rotation 0");shell("wm size 1080x1920");Thread.sleep(500);openMain();ui(this::openPicker);Thread.sleep(350);ui(this::checkSheetOnMain);capture("picker-small-phone");ui(()->{try{picker().dismiss();}catch(Exception e){throw new RuntimeException(e);}});
+        shell("wm size reset");Thread.sleep(500);
         ui(()->owner.connectDemo());Thread.sleep(1000);
         ui(()->{owner.startProgram(ProgramLibrary.byId("hiit30"));owner.engine().advance(420,200,90,150,15);owner.applyAuto();});Thread.sleep(1500);
         openMain();ActivityMonitor resumeMonitor=addMonitor(RideActivity.class.getName(),null,false);
@@ -106,7 +122,7 @@ public final class UiChecks extends Instrumentation {
         shell("wm size reset");Thread.sleep(600);
         ui(()->{owner.finishWorkout();owner.startProgram(ProgramLibrary.byId("free"));});openRide();ui(()->check(progressCount(activity.getWindow().getDecorView())==0,"free ride has no empty phase card"));capture("free-ride");
         result.putString("result","PASS: "+checks+" UI assertions (portrait, large text, landscape, small phone, free ride)");
-    }catch(Throwable error){code=0;result.putString("failure",error.toString()+" "+error.getCause());}
+    }catch(Throwable error){code=0;result.putString("failure",android.util.Log.getStackTraceString(error));}
     finally{
         try{if(owner!=null)ui(()->{if(owner.active())owner.finishWorkout();owner.disconnect();if(activity!=null)activity.finish();});}catch(Throwable ignored){}
         try{restore("system","font_scale",font);restore("system","user_rotation",rotation);restore("system","accelerometer_rotation",accelerometer);

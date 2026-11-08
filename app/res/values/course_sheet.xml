@@ -1,0 +1,6 @@
+<resources>
+    <style name="CourseSheetMotion">
+        <item name="android:windowEnterAnimation">@anim/course_sheet_enter</item>
+        <item name="android:windowExitAnimation">@anim/course_sheet_exit</item>
+    </style>
+</resources>
