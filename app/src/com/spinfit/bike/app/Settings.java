@@ -17,6 +17,7 @@ public final class Settings {
     public float weightKg()    { return clampF(p.getFloat("weight", 68f), 30f, 200f); }
     public int resistanceMax() { return clamp(p.getInt("rmax", 32), 8, 100); }
     public float timeScale()   { return clampF(p.getFloat("scale", 1f), 1f, 60f); }
+    /** Legacy preference retained for upgrades; course resistance policy now determines startup. */
     public boolean autoResistance() { return p.getBoolean("autores", true); }
     /** 0=功率(%FTP) 目标, 1=心率(%HRmax) 目标 */
     public int targetMode()    { return p.getInt("targetmode", 0); }

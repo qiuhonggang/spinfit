@@ -6,12 +6,17 @@ public class CoreChecks {
  public static void main(String[] args){
   check(ProgramLibrary.all().size()==9,"curated count");
   for(TrainingProgram p:ProgramLibrary.all()){
+   check(p.resistanceMode()==(p.freeRide?TrainingProgram.ResistanceMode.MANUAL:TrainingProgram.ResistanceMode.STAGED),"each published course has the expected startup policy: "+p.id);
    int sum=0;for(Segment s:p.segments){check(s.durationSec>0,"positive stage");check(s.targetCadence>=60&&s.targetCadence<=95,"sensible cadence");sum+=s.durationSec;}
    check(sum==p.totalSeconds(),"duration sum");
    if(!p.freeRide){check(p.segments[0].durationSec>=300,"warmup >=5min");check(p.segments[p.segments.length-1].durationSec>=300,"cooldown >=5min");}
    SessionEngine e=new SessionEngine(p,180,190,68,32);e.start();e.advance(1.8f,100,80,120,5);check(e.snapshot().elapsedSec==1,"clock not tied to packet count");e.pause();e.advance(3,100,80,120,5);check(e.snapshot().elapsedSec==1,"pause freezes clock");e.resume();e.advance(.3f,100,80,120,5);check(e.snapshot().elapsedSec==2,"resume clock");
    if(!p.freeRide){e.setTimeScale(60);for(int j=0;j<3000&&!e.isFinished();j++)e.advance(1,100,80,120,5);check(e.isFinished(),"natural finish");check(e.snapshot().elapsedSec==sum,"finish clamps exact duration");}
   }
+  TrainingProgram fixed=new TrainingProgram("fixed","Fixed","","",false,new Segment[]{new Segment("A","",60,50,25,70,1),new Segment("B","",60,80,25,90,3)});
+  check(fixed.resistanceMode()==TrainingProgram.ResistanceMode.FIXED,"power and cadence changes do not turn a fixed resistance course into staged control");
+  check(new TrainingProgram("none","","","",false,new Segment[0]).resistanceMode()==TrainingProgram.ResistanceMode.MANUAL,"missing resistance plan does not start automatic control");
+  check(new TrainingProgram("invalid","","","",false,new Segment[]{new Segment("","",60,50,Float.NaN,70,1)}).resistanceMode()==TrainingProgram.ResistanceMode.MANUAL,"invalid target does not authorize automatic control");
   TelemetryStats s=new TelemetryStats();s.add(1,100,80,120);s.add(3,200,-1,0);s.add(1,-1,100,160);near(s.avgPower(),175,"weighted power only valid");near(s.avgCadence(),90,"cadence ignores missing");near(s.avgHr(),140,"heart ignores missing");s.add(Float.NaN,900,900,900);near(s.avgPower(),175,"nan dt ignored");
   s.counters(8,100,false);s.counters(8.2f,103,true);near(s.distance,.2f,"counter delta baseline");near(s.calories,3,"calorie delta");s.counters(10,120,false);s.counters(10.1f,121,true);near(s.distance,.3f,"pause delta excluded");near(s.calories,4,"pause calories excluded");s.counters(.02f,0,true);s.counters(.04f,1,true);near(s.distance,.32f,"counter reset does not go negative");near(s.calories,5,"calorie reset");
   TelemetryStats empty=new TelemetryStats();check(empty.avgPower()==-1&&empty.avgCadence()==-1&&empty.avgHr()==-1,"missing averages stay missing");check(!empty.distanceSeen&&!empty.caloriesSeen,"missing counters stay missing");

@@ -43,6 +43,36 @@ public class DeviceChecks extends Instrumentation{
   transitions.resume();field(owner,"sampleAt",android.os.SystemClock.elapsedRealtime());field(owner,"lastTick",android.os.SystemClock.elapsedRealtime()-1000);field(owner,"stats",new TelemetryStats());owner.tick();check(recorder.targets.size()==2&&recorder.targets.get(1)==45&&transitions.snapshot().stageIndex==1,"session timer tick crosses into hard interval and automatically sends its target");
   owner.setAuto(false);transitions.advance(180,100,80,130,45);owner.applyAuto();check(recorder.targets.size()==2&&!transitions.isAutoResistance(),"manual mode survives later course phases without automatic writes");
   owner.setAuto(true);check(recorder.targets.size()==3&&recorder.targets.get(2)==45,"explicitly resuming auto immediately applies current phase");
+  // Exercise production startProgram with an isolated store and a service stub: no real BLE or timer.
+  android.content.Context serviceContext=new android.content.ContextWrapper(getTargetContext()){
+   @Override public android.content.ComponentName startForegroundService(android.content.Intent i){return i.getComponent();}
+   @Override public android.content.ComponentName startService(android.content.Intent i){return i.getComponent();}
+   @Override public boolean stopService(android.content.Intent i){return true;}
+  };
+  transitions.stop();field(owner,"context",serviceContext);field(owner,"demo",null);field(owner,"demoMode",false);
+  testSettings.setAutoResistance(false);
+  for(TrainingProgram candidate:ProgramLibrary.all()){
+   RecordingBike startup=new RecordingBike(null);field(owner,"source",startup);field(owner,"sample",knob);field(owner,"sampleAt",android.os.SystemClock.elapsedRealtime());
+   owner.startProgram(candidate);
+   check(owner.active()&&startup.starts==1,"course starts its device once: "+candidate.id);
+   check(owner.engine().isAutoResistance()==!candidate.freeRide,"startup mode follows course despite old global preference: "+candidate.id);
+   if(candidate.freeRide){check(startup.targets.isEmpty()&&owner.engine().getManualResistance()==16,"free ride preserves current bike resistance without any motor write");}
+   else{check(startup.targets.size()==1&&startup.targets.get(0)==Math.round(candidate.segments[0].targetResistancePct),"course immediately sends first phase target: "+candidate.id);}
+   owner.setAuto(false);owner.finishWorkout();
+  }
+  TrainingProgram fixed=new TrainingProgram("fixed_fixture","Fixed fixture","","",false,new Segment[]{new Segment("A","",60,50,25,70,1),new Segment("B","",60,80,25,90,3)});
+  RecordingBike startup=new RecordingBike(null);field(owner,"source",startup);field(owner,"sampleAt",android.os.SystemClock.elapsedRealtime());owner.startProgram(fixed);
+  check(!owner.engine().isAutoResistance()&&startup.targets.equals(Arrays.asList(25)),"fixed course sets target once on startup in manual mode");
+  owner.engine().advance(61,100,80,130,25);owner.applyAuto();owner.applyAuto();check(startup.targets.size()==1,"fixed course never repeats a successful startup write at later phases");
+  owner.adjustBy(1);check(startup.targets.equals(Arrays.asList(25,17)),"manual fixed-course adjustment steps from current actual resistance");owner.applyAuto();check(startup.targets.size()==2,"manual takeover cancels pending fixed startup target");owner.finishWorkout();
+  field(owner,"context",new android.content.ContextWrapper(getTargetContext()){
+   @Override public android.content.ComponentName startForegroundService(android.content.Intent i){throw new IllegalStateException("fixture service denied");}
+  });
+  startup=new RecordingBike(null);field(owner,"source",startup);boolean denied=false;
+  try{owner.startProgram(hiit);}catch(IllegalStateException expected){denied=true;}
+  check(denied&&!owner.active()&&store.get(owner.recordId()).status.equals("interrupted"),"service failure records an interrupted start");
+  check(startup.starts==0&&startup.stops==0&&startup.targets.isEmpty(),"failed service startup sends no bike commands");
+  field(owner,"context",getTargetContext());
   getTargetContext().deleteSharedPreferences(prefsName);
   final BikeSource.Sample[] missing=new BikeSource.Sample[1];BleBike minimal=new BleBike(getTargetContext(),"00:00:00:00:00:00","fixture",1);minimal.setListener(new BikeSource.Listener(){public void onState(int a,String b){}public void onLog(String l){}public void onData(BikeSource.Sample v){missing[0]=v;}});parse.invoke(minimal,BleBike.INDOOR_BIKE,new byte[]{0,0,0,0});waitForIdleSync();check(missing[0].speedValid&&!missing[0].powerValid&&!missing[0].hrValid&&!missing[0].caloriesValid&&!missing[0].distanceValid,"unreported fields not fabricated");
   String migration="spinfit_migration_tests.db";getTargetContext().deleteDatabase(migration);android.database.sqlite.SQLiteDatabase legacy=getTargetContext().openOrCreateDatabase(migration,0,null);
@@ -53,13 +83,13 @@ public class DeviceChecks extends Instrumentation{
   result.putString("result","PASS: "+count+" Android assertions (SQLite persistence, recovery, protocol fixtures)");finish(-1,result);
  }catch(Throwable e){result.putString("failure",e.toString());finish(0,result);}finally{if(store!=null)store.close();getTargetContext().deleteDatabase("spinfit_isolated_tests.db");}}
  static final class RecordingBike implements BikeSource{
-  final SessionEngine engine;final List<Integer> targets=new ArrayList<>(),seconds=new ArrayList<>();
+  int starts,stops;final SessionEngine engine;final List<Integer> targets=new ArrayList<>(),seconds=new ArrayList<>();
   RecordingBike(SessionEngine e){engine=e;}
   public void setListener(Listener l){} public void connect(){} public void disconnect(){}
   public boolean isConnected(){return true;} public int type(){return TYPE_FTMS;}
   public String name(){return "Isolated stage fixture";} public String address(){return "00:00:00:00:00:00";}
-  public WriteResult writeResistance(int level,int max){if(max!=100)throw new AssertionError("physical scale");targets.add(level);seconds.add(engine.snapshot().elapsedSec);return new WriteResult(true,true,level,"");}
-  public boolean writeTargetPower(int watts){return false;}public boolean startWorkout(){return true;}public boolean pauseWorkout(){return true;}public boolean stopWorkout(){return true;}
+  public WriteResult writeResistance(int level,int max){if(max!=100)throw new AssertionError("physical scale");targets.add(level);seconds.add((engine!=null?engine:BikeSession.get().engine()).snapshot().elapsedSec);return new WriteResult(true,true,level,"");}
+  public boolean writeTargetPower(int watts){return false;}public boolean startWorkout(){starts++;return true;}public boolean pauseWorkout(){return true;}public boolean stopWorkout(){stops++;return true;}
   public boolean supportsResistanceTarget(){return true;}public boolean hasControl(){return true;}public int actualResistance(){return -1;}public String diagnostics(){return "Fixture";}
  }
 

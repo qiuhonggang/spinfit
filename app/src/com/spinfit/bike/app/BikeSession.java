@@ -14,7 +14,7 @@ public final class BikeSession {
     private BikeSource source;private DemoBike demo;private BleBike ble;private Settings settings;private Context context;
     private SessionEngine engine;private TrainingProgram program;private Metrics last;private BikeSource.Sample sample;
     private BikeSource.WriteResult write;private String device="未连接单车";private boolean demoMode;
-    private long sampleAt,lastTick,recordId=-1;private int sentTarget=-1;private TelemetryStats stats;private WorkoutStore store;
+    private long sampleAt,lastTick,recordId=-1;private int sentTarget=-1,initialFixedResistance=-1;private TelemetryStats stats;private WorkoutStore store;
     private BleHeartRate heart;
     private boolean dataPaused;private String saveError="";private long manualCommandAt;
     public void init(Context c){if(context!=null)return;context=c.getApplicationContext();settings=new Settings(c);store=new WorkoutStore(c);store.recover();}
@@ -53,17 +53,22 @@ public final class BikeSession {
         ble=new BleBike(context,address,device,type);source=ble;sample=null;sampleAt=0;sentTarget=-1;write=null;
         attach();return true;
     }
-    public void disconnect(){if(active())return;if(source!=null)source.disconnect();source=null;demo=null;ble=null;sample=null;write=null;device="未连接单车";fire(BikeSource.STATE_DISCONNECTED,"单车已断开");}
+    public void disconnect(){if(active())return;if(source!=null)source.disconnect();source=null;demo=null;ble=null;sample=null;write=null;initialFixedResistance=-1;device="未连接单车";fire(BikeSource.STATE_DISCONNECTED,"单车已断开");}
     public void startProgram(TrainingProgram p){
         if(active()||!isConnected())return;
         manualCommandAt=0;write=null;if(ble!=null)ble.resetResistanceCommand();program=p;engine=new SessionEngine(p,settings.ftpW(),settings.maxHr(),settings.weightKg(),resistanceMax());
-        engine.setTimeScale(demoMode?settings.timeScale():1);engine.setAutoResistance(!p.freeRide&&settings.autoResistance());
-        engine.setManualResistance(sample!=null&&sample.resistanceValid?Math.max(resistanceMin(),Math.min(resistanceMax(),sample.resistance)):0);
+        engine.setTimeScale(demoMode?settings.timeScale():1);
+        TrainingProgram.ResistanceMode mode=p.resistanceMode();
+        int planned=Math.max(resistanceMin(),Math.min(resistanceMax(),Math.round(engine.currentTargetResistance())));
+        int current=sample!=null&&sample.resistanceValid?Math.max(resistanceMin(),Math.min(resistanceMax(),sample.resistance)):0;
+        engine.setManualResistance(mode==TrainingProgram.ResistanceMode.FIXED?planned:current);
+        engine.setAutoResistance(mode==TrainingProgram.ResistanceMode.STAGED);
+        initialFixedResistance=mode==TrainingProgram.ResistanceMode.FIXED?planned:-1;
         stats=new TelemetryStats();if(sample!=null)stats.counters(sample.distanceValid?sample.distanceKm:-1,sample.caloriesValid?sample.calories:-1,false);
         recordId=store.begin(p,device,demoMode);saveError="";sentTarget=-1;dataPaused=false;engine.start();last=engine.snapshot();lastTick=SystemClock.elapsedRealtime();
+        Intent i=new Intent(context,WorkoutService.class);try{if(Build.VERSION.SDK_INT>=26)context.startForegroundService(i);else context.startService(i);}catch(RuntimeException e){engine.stop();store.checkpoint(recordId,engine.snapshot(),stats,"interrupted",null);initialFixedResistance=-1;throw e;}
         source.startWorkout();applyAuto();
         if(heart==null&&!settings.heartAddress().isEmpty())connectHeart(context,settings.heartAddress(),settings.heartName());
-        Intent i=new Intent(context,WorkoutService.class);try{if(Build.VERSION.SDK_INT>=26)context.startForegroundService(i);else context.startService(i);}catch(RuntimeException e){engine.stop();store.checkpoint(recordId,engine.snapshot(),stats,"interrupted",null);source.stopWorkout();throw e;}
     }
     public void tick(){
         if(!active())return;long now=SystemClock.elapsedRealtime();float dt=Math.max(0,Math.min(5,(now-lastTick)/1000f));lastTick=now;
@@ -86,12 +91,25 @@ public final class BikeSession {
         if(engine.isFinished()){source.stopWorkout();context.stopService(new Intent(context,WorkoutService.class));fire(10,"训练已保存");}
     }
     private void checkpoint(String status,BikeSource.Sample s){try{store.checkpoint(recordId,engine.snapshot(),stats,status,s);saveError="";}catch(RuntimeException e){saveError="记录保存失败，请检查手机存储空间";engine.pause();fire(11,saveError);}}
-    public void applyAuto(){if(engine==null||source==null||engine.isPaused()||!engine.isAutoResistance())return;int t=Math.round(engine.currentTargetResistance());if(t!=sentTarget||(ble!=null&&ble.resistanceNeedsRetry(t))){write=source.writeResistance(t,resistanceMax());if(write!=null&&write.sent)sentTarget=t;}}
-    public void setAuto(boolean b){if(!active())return;manualCommandAt=0;if(ble!=null)ble.resetResistanceCommand();if(!b)engine.setManualResistance(Math.round(engine.currentTargetResistance()));engine.setAutoResistance(b);sentTarget=-1;if(b)applyAuto();}
+    public void applyAuto(){
+        if(engine==null||source==null||engine.isPaused())return;
+        int target;
+        if(engine.isAutoResistance())target=Math.round(engine.currentTargetResistance());
+        else if(initialFixedResistance>=0){
+            boolean settled=ble!=null?(ble.resistanceControlVerified()||ble.resistanceOverridden()):
+                (sentTarget==initialFixedResistance&&fresh()&&sample.resistanceValid&&sample.resistance==initialFixedResistance);
+            if(settled){initialFixedResistance=-1;return;}
+            target=initialFixedResistance;
+        }else return;
+        if(target!=sentTarget||(ble!=null&&ble.resistanceNeedsRetry(target))){
+            write=source.writeResistance(target,resistanceMax());if(write!=null&&write.sent)sentTarget=target;
+        }
+    }
+    public void setAuto(boolean b){if(!active())return;initialFixedResistance=-1;manualCommandAt=0;if(ble!=null)ble.resetResistanceCommand();if(!b)engine.setManualResistance(Math.round(engine.currentTargetResistance()));engine.setAutoResistance(b);sentTarget=-1;if(b)applyAuto();}
     public void adjustBy(int delta){if(!active()||engine.isPaused())return;long now=SystemClock.elapsedRealtime();int actual=fresh()&&sample.resistanceValid?sample.resistance:-1;int target=ResistanceScale.step(actual,Math.round(engine.currentTargetResistance()),delta,resistanceMin(),resistanceMax(),manualCommandAt>0&&now-manualCommandAt<1500);adjust(target);manualCommandAt=now;}
-    public void adjust(int level){if(!active()||engine.isPaused())return;engine.setAutoResistance(false);engine.setManualResistance(Math.max(resistanceMin(),Math.min(resistanceMax(),level)));write=source.writeResistance(engine.getManualResistance(),resistanceMax());}
+    public void adjust(int level){if(!active()||engine.isPaused())return;initialFixedResistance=-1;engine.setAutoResistance(false);engine.setManualResistance(Math.max(resistanceMin(),Math.min(resistanceMax(),level)));write=source.writeResistance(engine.getManualResistance(),resistanceMax());}
     public void pause(){if(!active())return;tick();if(!active())return;engine.pause();source.pauseWorkout();checkpoint("active",null);}
     public boolean resume(){if(!active()||!fresh())return false;engine.resume();dataPaused=false;lastTick=SystemClock.elapsedRealtime();if(sample!=null)stats.counters(sample.distanceValid?sample.distanceKm:-1,sample.caloriesValid?sample.calories:-1,false);source.startWorkout();sentTarget=-1;applyAuto();return true;}
     public boolean dataPaused(){return dataPaused;}
-    public long finishWorkout(){if(engine==null)return recordId;if(active()){tick();engine.stop();if(source!=null)source.stopWorkout();checkpoint("saved",null);}else if(!saveError.isEmpty())checkpoint("saved",null);if(saveError.isEmpty())context.stopService(new Intent(context,WorkoutService.class));return recordId;}
+    public long finishWorkout(){initialFixedResistance=-1;if(engine==null)return recordId;if(active()){tick();engine.stop();if(source!=null)source.stopWorkout();checkpoint("saved",null);}else if(!saveError.isEmpty())checkpoint("saved",null);if(saveError.isEmpty())context.stopService(new Intent(context,WorkoutService.class));return recordId;}
 }
